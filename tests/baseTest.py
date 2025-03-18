@@ -1,22 +1,20 @@
+import time
 import unittest
+import os
+import shutil
+import uuid
 
 import allure
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import os
-import uuid
 
 
 class BaseSeleniumTest(unittest.TestCase):
-    """Базовый класс для Selenium тестов"""
 
     @classmethod
     def setUpClass(cls):
-        # cls.base_url = os.getenv('BASE_URL', 'https://example.com')
-        # cls.browser = os.getenv('BROWSER', 'chrome').lower()
-        # cls.headless = os.getenv('HEADLESS', 'false').lower() == 'true'
         cls.base_url = "https://sbis.ru"
         cls.browser = 'chrome'
         cls.headless = False
@@ -27,14 +25,26 @@ class BaseSeleniumTest(unittest.TestCase):
         self.wait = WebDriverWait(self.driver, 10)
 
     def _init_driver(self):
-        """Инициализация WebDriver с выбранными опциями"""
         if self.browser == 'chrome':
             from selenium.webdriver.chrome.options import Options
             options = Options()
             if self.headless:
                 options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-safe-browsing")
+
+            download_path = os.path.join(os.path.dirname(__file__), "downloads")
+            shutil.rmtree(download_path, ignore_errors=True)
+            os.makedirs(download_path, exist_ok=True)
+
+            options.add_experimental_option('prefs', {
+                "download.default_directory": download_path,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True,
+                "browser.download.folderList": 2,
+                "browser.download.manager.showWhenStarting": False,
+                "browser.helperApps.neverAsk.saveToDisk": "exe"
+            })
             self.driver = webdriver.Chrome(options=options)
 
         elif self.browser == 'firefox':
@@ -56,7 +66,6 @@ class BaseSeleniumTest(unittest.TestCase):
         return any(error for (method, error) in self._outcome.errors)
 
     def take_screenshot(self):
-        """Сделать скриншот"""
         screenshot_name = f'{self._testMethodName}_{str(uuid.uuid4())}'
         png_bytes = self.driver.get_screenshot_as_png()
         allure.attach(
@@ -65,25 +74,18 @@ class BaseSeleniumTest(unittest.TestCase):
             attachment_type=allure.attachment_type.PNG
         )
 
-    def open_path(self, path='/'):
-        """Открыть указанный путь на базовом URL"""
-        url = f"{self.base_url}{path}"
-        self.driver.get(url)
-
-    def wait_for_element(self, locator):
-        """Ожидание появления элемента"""
-        return self.wait.until(EC.presence_of_element_located(locator))
-
-    def assert_page_title(self, expected_title):
-        """Проверка заголовка страницы"""
-        actual_title = self.driver.title
-        self.assertEqual(
-            actual_title,
-            expected_title,
-            f"Wrong page title. Expected: {expected_title}, Actual: {actual_title}"
-        )
-
     def switch_on_new_tab(self, main_window):
         WebDriverWait(self.driver, 10).until(EC.number_of_windows_to_be(2))
         new_window = [window for window in self.driver.window_handles if window != main_window][0]
         self.driver.switch_to.window(new_window)
+
+    def wait_for_download(self, directory, timeout=30):
+        end_time = time.time() + timeout
+        while True:
+            temp_files = [f for f in os.listdir(directory) if f.endswith('.crdownload')]
+            exe_files = [f for f in os.listdir(directory) if f.endswith('.exe')]
+            if not temp_files and exe_files:
+                return exe_files[0]
+            if time.time() > end_time:
+                raise TimeoutError("Файл не загрузился за отведенное время")
+            time.sleep(1)
